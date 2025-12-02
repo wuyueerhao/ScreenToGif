@@ -175,12 +175,36 @@ jobs:
                     --data-binary @"/tmp/$ASSET_NAME" \
                     "${UPLOAD_URL}?name=${ASSET_NAME}" 2>&1)
 
-                  if [[ "$UPLOAD_RESPONSE" == *"201 Created"* ]]; then
-                    echo "✅ 附件上传成功: $ASSET_NAME"
+                  echo "📤 正在上传附件: $ASSET_NAME 到 Release ID $RELEASE_ID"
+                  UPLOAD_RESPONSE=$(curl -X POST \
+                    -H "Authorization: token $GITHUB_TOKEN" \
+                    -H "Content-Type: $CONTENT_TYPE" \
+                    -H "Accept: application/vnd.github.v3+json" \
+                    --data-binary @"/tmp/$ASSET_NAME" \
+                    "${UPLOAD_URL}?name=${ASSET_NAME}" 2>&1)
+                  
+                  # 🔍 智能判断响应是否为 JSON，避免 jq 解析错误
+                  if echo "$UPLOAD_RESPONSE" | head -1 | grep -qE '^\{.*\}$|^\[.*\]$'; then
+                    # 看起来像 JSON，尝试用 jq 解析
+                    if echo "$UPLOAD_RESPONSE" | jq empty >/dev/null 2>&1; then
+                      if echo "$UPLOAD_RESPONSE" | jq -e 'has("id")' >/dev/null 2>&1; then
+                        echo "✅ 附件上传成功: $ASSET_NAME"
+                      else
+                        echo "❌ 附件上传失败: $ASSET_NAME"
+                        echo "错误详情（JSON）："
+                        echo "$UPLOAD_RESPONSE" | jq .
+                      fi
+                    else
+                      # JSON 格式无效
+                      echo "❌ 附件上传失败: $ASSET_NAME"
+                      echo "返回内容不是有效的 JSON："
+                      echo "$UPLOAD_RESPONSE"
+                    fi
                   else
+                    # 不是 JSON，直接打印原始响应
                     echo "❌ 附件上传失败: $ASSET_NAME"
-                    echo "错误详情："
-                    echo "$UPLOAD_RESPONSE" | jq .
+                    echo "返回内容（非 JSON）："
+                    echo "$UPLOAD_RESPONSE"
                   fi
 
                   rm -f "/tmp/$ASSET_NAME"
