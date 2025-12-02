@@ -131,10 +131,15 @@ jobs:
                 "prerelease": '$PRERELEASE'
               }')
 
-            # 检查是否创建成功
+            # 🔍 先打印原始 API 返回内容，便于调试
+            echo "📥 Raw API Response (创建 Release):"
+            echo "$CREATED_RELEASE"
+
+            # 尝试解析是否有 id 字段，判断是否创建成功
             echo "$CREATED_RELEASE" | jq -e 'has("id")' >/dev/null 2>&1
             if [ $? -ne 0 ]; then
-              echo "❌ 创建 Release 失败，返回内容："
+              echo "❌ 创建 Release 失败，返回的 JSON 无效或 API 返回错误。"
+              echo "返回内容："
               echo "$CREATED_RELEASE"
               echo "⏩ 跳过此 Release 的附件同步"
               continue
