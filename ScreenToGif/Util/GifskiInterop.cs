@@ -1,242 +1,168 @@
-﻿using System;
-using System.IO;
+using ScreenToGif.Domain.Enums;
+using ScreenToGif.Domain.Structs;
+using ScreenToGif.Native.Helpers;
+using ScreenToGif.Util.Codification;
+using ScreenToGif.Util.Extensions;
+using ScreenToGif.Util.Settings;
+using System;
 using System.Runtime.InteropServices;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
-using ScreenToGif.ImageUtil;
-using ScreenToGif.ImageUtil.Gif.Encoder;
 
-namespace ScreenToGif.Util
+namespace ScreenToGif.Util;
+
+/// <summary>
+/// Interoperability with the Gifski library.
+/// https://docs.rs/gifski/latest/gifski/
+/// </summary>
+internal class GifskiInterop : IDisposable
 {
-    internal class GifskiInterop
+    private double _timeStamp = 0;
+
+    private delegate IntPtr NewDelegate(GifskiSettings settings);
+    private delegate GifskiErrorCodes AddPngFrameDelegate(IntPtr handle, uint index, [MarshalAs(UnmanagedType.LPUTF8Str)] string path, double timestamp);
+    private delegate GifskiErrorCodes AddRgbFrameDelegate(IntPtr handle, uint frameNumber, uint width, uint bytesPerRow, uint height, IntPtr pixels, double timestamp);
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate void ErrorMessageCallback(IntPtr message, IntPtr userData);
+    private delegate GifskiErrorCodes SetErrorMessageCallbackDelegate(IntPtr handle, ErrorMessageCallback callback, IntPtr userData);
+    private delegate GifskiErrorCodes SetFileOutputDelegate(IntPtr handle, [MarshalAs(UnmanagedType.LPUTF8Str)] string path);
+    private delegate GifskiErrorCodes FinishDelegate(IntPtr handle);
+
+    private delegate GifskiErrorCodes EndAddingFramesDelegate(IntPtr handle);
+    private delegate GifskiErrorCodes WriteDelegate(IntPtr handle, [MarshalAs(UnmanagedType.LPUTF8Str)] string destination);
+    private delegate void DropDelegate(IntPtr handle);
+
+    private readonly NewDelegate _new;
+    private readonly AddPngFrameDelegate _addPngFrame;
+    private readonly AddRgbFrameDelegate _addRgbFrame;
+    private readonly SetErrorMessageCallbackDelegate _setErrorCallback;
+    private readonly SetFileOutputDelegate _setFileOutput;
+    private readonly FinishDelegate _finish;
+    private readonly EndAddingFramesDelegate _endAddingFrames;
+    private readonly WriteDelegate _write;
+    private readonly DropDelegate _drop;
+
+    public bool IsOlderThan0Dot9 => _endAddingFrames != null;
+
+    public GifskiInterop()
     {
-        public Version Version { get; set; }
+        var dllPath = UserSettings.All.GifskiLocation;
 
-        [StructLayout(LayoutKind.Sequential)]
-        internal struct GifskiSettings
-        {
-            public GifskiSettings(byte quality, bool looped, bool fast)
-            {
-                Width = 0;
-                Height = 0;
-                Quality = quality;
-                Once = !looped;
-                Fast = fast;
-            }
+        _new = FunctionLoader.LoadFunction<NewDelegate>(dllPath, "gifski_new");
+        _addPngFrame = FunctionLoader.LoadFunction<AddPngFrameDelegate>(dllPath, "gifski_add_frame_png_file");
+        _addRgbFrame = FunctionLoader.LoadFunction<AddRgbFrameDelegate>(dllPath, "gifski_add_frame_rgb");
 
-            /// <summary>
-            /// Resize to max this width if non-0.
-            /// </summary>
-            internal uint Width;
+        //Older versions of the library. < 0.9
+        _endAddingFrames = FunctionLoader.TryLoadFunction<EndAddingFramesDelegate>(dllPath, "gifski_end_adding_frames");
+        _write = FunctionLoader.TryLoadFunction<WriteDelegate>(dllPath, "gifski_write");
+        _drop = FunctionLoader.TryLoadFunction<DropDelegate>(dllPath, "gifski_drop");
 
-            /// <summary>
-            /// Resize to max this height if width is non-0. Note that aspect ratio is not preserved.
-            /// </summary>
-            internal uint Height;
-
-            /// <summary>
-            /// 1-100. Recommended to set to 100.
-            /// </summary>
-            internal byte Quality;
-
-            /// <summary>
-            /// If true, looping is disabled.
-            /// </summary>
-            internal bool Once;
-
-            /// <summary>
-            /// Lower quality, but faster encode.
-            /// </summary>
-            internal bool Fast;
-        }
-
-        internal enum GifskiError
-        {
-            /// <summary>
-            /// Alright.
-            /// </summary>
-            Ok = 0,
-
-            /// <summary>
-            /// One of input arguments was NULL.
-            /// </summary>
-            NullArgument = 1,
-
-            /// <summary>
-            /// A one-time function was called twice, or functions were called in wrong order.
-            /// </summary>
-            InvalidState = 2,
-
-            /// <summary>
-            /// Internal error related to palette quantization.
-            /// </summary>
-            QuantizationError = 4,
-
-            /// <summary>
-            /// Internal error related to gif composing.
-            /// </summary>
-            GifError = 5,
-
-            /// <summary>
-            /// Internal error related to multithreading.
-            /// </summary>
-            ThreadLost = 6,
-
-            /// <summary>
-            /// I/O error: file or directory not found.
-            /// </summary>
-            NotFound = 7,
-
-            /// <summary>
-            /// I/O error: permission denied.
-            /// </summary>
-            PermissionDenied = 8,
-
-            /// <summary>
-            /// I/O error: File already exists.
-            /// </summary>
-            AlreadyExists = 9,
-
-            /// <summary>
-            /// Misc I/O error.
-            /// </summary>
-            InvalidInput = 10,
-
-            /// <summary>
-            /// Misc I/O error.
-            /// </summary>
-            TimedOut = 11,
-
-            /// <summary>
-            /// Misc I/O error.
-            /// </summary>
-            WriteZero = 12,
-
-            /// <summary>
-            /// Misc I/O error.
-            /// </summary>
-            Interrupted = 13,
-
-            /// <summary>
-            /// Misc I/O error.
-            /// </summary>
-            UnexpectedEof = 14,
-
-            /// <summary>
-            /// Should not happen, file a bug.
-            /// </summary>
-            OtherError = 15
-        }
-
-        private delegate IntPtr NewDelegate(GifskiSettings settings);
-        private delegate GifskiError AddPngFrameDelegate(IntPtr handle, uint index, [MarshalAs(UnmanagedType.LPUTF8Str)] string path, ushort delay);
-        private delegate GifskiError AddRgbaFrameDelegate(IntPtr handle, uint index, uint width, uint height, IntPtr pixels, ushort delay);
-        private delegate GifskiError AddRgbFrameDelegate(IntPtr handle, uint index, uint width, uint bytesPerRow, uint height, IntPtr pixels, ushort delay);
-
-        private delegate GifskiError SetFileOutputDelegate(IntPtr handle, [MarshalAs(UnmanagedType.LPUTF8Str)] string path);
-        private delegate GifskiError FinishDelegate(IntPtr handle);
-
-        private delegate GifskiError EndAddingFramesDelegate(IntPtr handle);
-        private delegate GifskiError WriteDelegate(IntPtr handle, [MarshalAs(UnmanagedType.LPUTF8Str)] string destination);
-        private delegate void DropDelegate(IntPtr handle);
-
-        private readonly NewDelegate _new;
-        private readonly AddPngFrameDelegate _addPngFrame;
-        private readonly AddRgbFrameDelegate _addRgbFrame;
-        private readonly AddRgbaFrameDelegate _addRgbaFrame;
-
-        private readonly SetFileOutputDelegate _setFileOutput;
-        private readonly FinishDelegate _finish;
-
-        private readonly EndAddingFramesDelegate _endAddingFrames;
-        private readonly WriteDelegate _write;
-        private readonly DropDelegate _drop;
-
-        public GifskiInterop()
-        {
-            #region Get Gifski version
-
-            var info = new FileInfo(UserSettings.All.GifskiLocation);
-            info.Refresh();
-
-            Version = info.Length == 502_208 ? new Version(0, 9, 3) : new Version(0, 0);
-
-            #endregion
-
-            #region Load functions
-
-            _new = (NewDelegate)FunctionLoader.LoadFunction<NewDelegate>(UserSettings.All.GifskiLocation, "gifski_new");
-            _addPngFrame = (AddPngFrameDelegate)FunctionLoader.LoadFunction<AddPngFrameDelegate>(UserSettings.All.GifskiLocation, "gifski_add_frame_png_file");
-            _addRgbaFrame = (AddRgbaFrameDelegate)FunctionLoader.LoadFunction<AddRgbaFrameDelegate>(UserSettings.All.GifskiLocation, "gifski_add_frame_rgba");
-            _addRgbFrame = (AddRgbFrameDelegate)FunctionLoader.LoadFunction<AddRgbFrameDelegate>(UserSettings.All.GifskiLocation, "gifski_add_frame_rgb");
-
-            if (Version.Major == 0 && Version.Minor < 9)
-            {
-                //Older versions of the library.
-                _endAddingFrames = (EndAddingFramesDelegate)FunctionLoader.LoadFunction<EndAddingFramesDelegate>(UserSettings.All.GifskiLocation, "gifski_end_adding_frames");
-                _write = (WriteDelegate)FunctionLoader.LoadFunction<WriteDelegate>(UserSettings.All.GifskiLocation, "gifski_write");
-                _drop = (DropDelegate)FunctionLoader.LoadFunction<DropDelegate>(UserSettings.All.GifskiLocation, "gifski_drop");
-            }
-            else
-            {
-                //Newer versions.
-                _setFileOutput = (SetFileOutputDelegate)FunctionLoader.LoadFunction<SetFileOutputDelegate>(UserSettings.All.GifskiLocation, "gifski_set_file_output");
-                _finish = (FinishDelegate)FunctionLoader.LoadFunction<FinishDelegate>(UserSettings.All.GifskiLocation, "gifski_finish");
-            }
-
-            #endregion
-        }
-
-        internal IntPtr Start(int quality, bool looped = true, bool fast = false)
-        {
-            return _new(new GifskiSettings((byte)quality, looped, fast));
-        }
-
-        internal GifskiError AddFrame(IntPtr handle, uint index, string path, int delay)
-        {
-            if (Version.Major == 0 && Version.Minor < 9)
-                return _addPngFrame(handle, index, path, (ushort)(delay / 10));
-
-            var util = new PixelUtil(new FormatConvertedBitmap(path.SourceFrom(), PixelFormats.Rgb24, null, 0));
-            util.LockBits();
-
-            var result = AddFramePixels(handle, index, (uint) util.Width, (uint)((util.Width * 24 + 31) / 32) * 4, (uint) util.Height, util.BackBuffer, (ushort)delay);
-
-            util.UnlockBitsWithoutCommit();
-
-            return result;
-        }
-
-        internal GifskiError AddFramePixels(IntPtr handle, uint index, uint width, uint bitsPerRow, uint height, IntPtr pixels, int delay)
-        {
-            return _addRgbFrame(handle, index, width, bitsPerRow, height, pixels, (ushort)(delay / 10));
-        }
-
-        internal GifskiError EndAdding(IntPtr handle)
-        {
-            if (Version.Major == 0 && Version.Minor < 9)
-                return _endAddingFrames(handle);
-
-            return _finish(handle);
-        }
-
-        internal GifskiError SetOutput(IntPtr handle, string destination)
-        {
-            return _setFileOutput(handle, destination);
-        }
-
-        internal GifskiError End(IntPtr handle, string destination)
-        {
-            var status = _write(handle, destination);
-
-            if (status != GifskiError.Ok)
-            {
-                _drop(handle);
-                return status;
-            }
-
-            _drop(handle);
-            return GifskiError.Ok;
-        }
+        //Newer versions.
+        _setErrorCallback = FunctionLoader.TryLoadFunction<SetErrorMessageCallbackDelegate>(dllPath, "gifski_set_error_message_callback");
+        _setFileOutput = FunctionLoader.TryLoadFunction<SetFileOutputDelegate>(dllPath, "gifski_set_file_output");
+        _finish = FunctionLoader.TryLoadFunction<FinishDelegate>(dllPath, "gifski_finish");
     }
+
+    internal IntPtr Start(uint width, uint height, int quality, bool looped = true, bool fast = false)
+    {
+        return _new(new GifskiSettings(width, height, (byte)quality, looped, fast));
+    }
+
+    internal GifskiErrorCodes AddFrame(IntPtr handle, uint index, string path, int delay, double lastDelay = 0, bool isLast = false)
+    {
+        if (_addPngFrame != null)
+        {
+            var result2 = _addPngFrame(handle, index, path, index == 0 ? lastDelay : _timeStamp);
+
+            if (index == 0)
+                result2 = _addPngFrame(handle, index, path, 0);
+
+            _timeStamp += delay / 1000D;
+            return result2;
+        }
+
+        //var aa = new FormatConvertedBitmap(path.SourceFrom(), PixelFormats.Rgb24, null, 0);
+
+        var util = new PixelUtil(new FormatConvertedBitmap(path.SourceFrom(), PixelFormats.Rgb24, null, 0));
+        util.LockBitsAndUnpad();
+
+        var bytesPerRow = util.Width * 3; //Was ((util.Width * 24 + 31) / 32) * 3
+
+        //if (bytesPerRow % 4 != 0)
+        //    bytesPerRow += (4 - (bytesPerRow % 4));
+
+        //Pin the buffer in order to pass the address as parameter later.
+        var pinnedBuffer = GCHandle.Alloc(util.Pixels, GCHandleType.Pinned);
+        var address = pinnedBuffer.AddrOfPinnedObject();
+
+        //First frame receives the delay set of the last frame.
+        var result = AddFramePixels(handle, index, (uint)util.Width, (uint)bytesPerRow, (uint)util.Height, address, index == 0 ? lastDelay : _timeStamp);
+
+        //Bug in gifski, the first frame delay has a weird value if we don't have the next frame as zero. 
+        if (index == 0)
+            result = AddFramePixels(handle, index, (uint)util.Width, (uint)bytesPerRow, (uint)util.Height, address, 0);
+
+        _timeStamp += delay / 1000D;
+        
+        //The buffer must be unpinned, to free resources.
+        pinnedBuffer.Free();
+        util.UnlockBitsWithoutCommit();
+
+        return result;
+    }
+
+    internal GifskiErrorCodes AddFramePixels(IntPtr handle, uint frameNumber, uint width, uint bytesPerRow, uint height, IntPtr pixels, double timestamp)
+    {
+        return _addRgbFrame(handle, frameNumber, width, bytesPerRow, height, pixels, timestamp);
+    }
+
+    internal GifskiErrorCodes EndAdding(IntPtr handle)
+    {
+        return _endAddingFrames?.Invoke(handle) ?? _finish(handle);
+    }
+
+    private static void OnGifskiError(IntPtr messagePtr, IntPtr userData)
+    {
+        var message = Marshal.PtrToStringUTF8(messagePtr);
+
+        System.Diagnostics.Debug.WriteLine($"Gifski error: {message}");
+    }
+
+    internal GifskiErrorCodes SetOutput(IntPtr handle, string destination)
+    {
+        _setErrorCallback(handle, OnGifskiError, IntPtr.Zero);
+
+        return _setFileOutput(handle, destination);
+    }
+
+    internal GifskiErrorCodes End(IntPtr handle, string destination)
+    {
+        var status = _write(handle, destination);
+
+        if (status != GifskiErrorCodes.Ok)
+        {
+            _drop(handle);
+
+            return status;
+        }
+
+        _drop(handle);
+
+        return GifskiErrorCodes.Ok;
+    }
+
+    private void ReleaseUnmanagedResources()
+    {
+        FunctionLoader.UnloadLibrary(UserSettings.All.GifskiLocation!);
+    }
+
+    public void Dispose()
+    {
+        ReleaseUnmanagedResources();
+
+        GC.SuppressFinalize(this);
+    }
+
+    ~GifskiInterop() => ReleaseUnmanagedResources();
 }

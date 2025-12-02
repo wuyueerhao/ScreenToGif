@@ -1,9 +1,25 @@
-﻿<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
                     xmlns:s="clr-namespace:System;assembly=mscorlib">
 
     <s:Double x:Key="Element.Opacity">1</s:Double>
 
+    <!--Shadows-->
+    <DropShadowEffect x:Key="Shadow.Background.Tiny" ShadowDepth="0" Color="WhiteSmoke" Opacity=".6" BlurRadius="1" RenderingBias="Quality"/>
+    <DropShadowEffect x:Key="Shadow.Background.Small" ShadowDepth="0" Color="WhiteSmoke" Opacity=".6" BlurRadius="2" RenderingBias="Quality"/>
+    <DropShadowEffect x:Key="Shadow.Background" ShadowDepth="0" Color="WhiteSmoke" Opacity=".6" BlurRadius="3" RenderingBias="Quality"/>
+    <DropShadowEffect x:Key="Shadow.Background.Large" ShadowDepth="0" Color="WhiteSmoke" Opacity=".6" BlurRadius="5" RenderingBias="Quality"/>
+
+    <DropShadowEffect x:Key="Shadow.Border.Tiny" ShadowDepth="0" Color="#FFABABAB" Opacity=".35" BlurRadius="2" RenderingBias="Quality"/>
+    <DropShadowEffect x:Key="Shadow.Border.Small" ShadowDepth="0" Color="#FFABABAB" Opacity=".4" BlurRadius="3" RenderingBias="Quality"/>
+    <DropShadowEffect x:Key="Shadow.Border" ShadowDepth="0" Color="#FFABABAB" Opacity=".5" BlurRadius="3" RenderingBias="Quality"/>
+    <DropShadowEffect x:Key="Shadow.Border.Large" ShadowDepth="0" Color="#FFABABAB" Opacity=".4" BlurRadius="5" RenderingBias="Quality"/>
+    <DropShadowEffect x:Key="Shadow.Border.Dark" ShadowDepth="0" Color="#FFABABAB" Opacity=".5" BlurRadius="3" RenderingBias="Quality"/>
+
+    <!--Gradients-->
+    <Color x:Key="Gradient.Border.Light">#4FE0E3E6</Color>
+
+    <!--Colors-->
     <SolidColorBrush x:Key="Panel.Background" Color="#FFFFFFFF"/>
     <SolidColorBrush x:Key="Panel.Background.Level2" Color="#FFFAFAFA"/>
     <SolidColorBrush x:Key="Panel.Background.Level3" Color="WhiteSmoke"/>
@@ -31,7 +47,6 @@
     <SolidColorBrush x:Key="Element.Border" Color="#FFABABAB"/>
     <SolidColorBrush x:Key="Element.Border.Medium" Color="#FFA3BDE3"/>
     <SolidColorBrush x:Key="Element.Border.Light" Color="#FFE0E3E6"/>
-    <SolidColorBrush x:Key="Element.Border.Weak" Color="#35000000"/>
     <SolidColorBrush x:Key="Element.Border.Hover" Color="#FF7EB4EA"/>
     <SolidColorBrush x:Key="Element.Border.Pressed" Color="#FF569DE5"/>
     <SolidColorBrush x:Key="Element.Border.Required" Color="DarkBlue"/>
@@ -125,5 +140,9 @@
     <SolidColorBrush x:Key="Item.SelectedActive.Border" Color="#FF26A0DA"/>
 
     <!--ProgressBar-->
-    <SolidColorBrush x:Key="Brush.ProgressBar.Progress" Color="#FF06B025"/>
+    <SolidColorBrush x:Key="Brush.ProgressBar.Detail" Color="#60EFEFEF"/>
+    <SolidColorBrush x:Key="Brush.ProgressBar.Primary" Color="#FF06B025"/>
+    <SolidColorBrush x:Key="Brush.ProgressBar.Info" Color="#FF007CDE"/>
+    <SolidColorBrush x:Key="Brush.ProgressBar.Warning" Color="#FFC8CF07"/>
+    <SolidColorBrush x:Key="Brush.ProgressBar.Danger" Color="#FFCF0500"/>
 </ResourceDictionary>
