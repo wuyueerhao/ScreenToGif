@@ -81,13 +81,13 @@ jobs:
           git push origin master
 
       # ----------------------------------------------
-      # Step 4: 同步 Releases 和附件
+      # Step 4: 同步 Releases 和附件（已修复 JSON 构造问题）
       # ----------------------------------------------
       - name: Sync Releases and Assets using GitHub API
         env:
           SOURCE_REPO: ${{ steps.repo_info.outputs.upstream_full_name }}
           TARGET_REPO: ${{ steps.repo_info.outputs.target_repo }}
-          GITHUB_TOKEN: ${{ secrets.MY_GIT_TOKEN }}  # 或者使用 secrets.GITHUB_TOKEN（但权限可能不足）
+          GITHUB_TOKEN: ${{ secrets.MY_GIT_TOKEN }}  # 请确保此 Token 有 repo 权限
         run: |
           echo "🔁 开始同步 Releases 和附件"
           echo "📥 源仓库（上游）: $SOURCE_REPO"
@@ -117,10 +117,8 @@ jobs:
 
             echo "🔁 正在处理 Release: $NAME (Tag: $TAG_NAME)"
 
-            # Step 1: 在你的 Fork 中创建相同的 Release
-            echo "🆕 在你的 Fork 中创建 Release: $NAME (Tag: $TAG_NAME)"
-
-            # 使用 jq 安全构造 JSON 请求体，避免手动拼接导致格式错误
+            # Step 1: 在你的 Fork 中创建相同的 Release（使用 jq 构造合法 JSON，避免手动拼接错误）
+            echo "🆕 在你的 Fork 中创建 Release: $NAME"
             RELEASE_PAYLOAD=$(jq -n \
               --arg tag_name "$TAG_NAME" \
               --arg name "$NAME" \
@@ -135,7 +133,6 @@ jobs:
                 prerelease: $prerelease
               }')
 
-            # 发送请求到 GitHub API 创建 Release
             CREATED_RELEASE=$(curl -X POST \
               -H "Authorization: token $GITHUB_TOKEN" \
               -H "Accept: application/vnd.github.v3+json" \
@@ -149,7 +146,8 @@ jobs:
             # 检查是否创建成功：是否有 "id" 字段
             echo "$CREATED_RELEASE" | jq -e 'has("id")' >/dev/null 2>&1
             if [ $? -ne 0 ]; then
-              echo "❌ 创建 Release 失败，返回内容："
+              echo "❌ 创建 Release 失败，返回的 JSON 无效或 API 返回错误。"
+              echo "返回内容："
               echo "$CREATED_RELEASE"
               echo "⏩ 跳过此 Release 的附件同步"
               continue
