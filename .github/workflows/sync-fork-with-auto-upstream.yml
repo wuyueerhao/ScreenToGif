@@ -118,28 +118,38 @@ jobs:
             echo "🔁 正在处理 Release: $NAME (Tag: $TAG_NAME)"
 
             # Step 1: 在你的 Fork 中创建相同的 Release
-            echo "🆕 在你的 Fork 中创建 Release: $NAME"
+            echo "🆕 在你的 Fork 中创建 Release: $NAME (Tag: $TAG_NAME)"
+
+            # 使用 jq 安全构造 JSON 请求体，避免手动拼接导致格式错误
+            RELEASE_PAYLOAD=$(jq -n \
+              --arg tag_name "$TAG_NAME" \
+              --arg name "$NAME" \
+              --arg body "$BODY" \
+              --argjson draft "$DRAFT" \
+              --argjson prerelease "$PRERELEASE" \
+              '{
+                tag_name: $tag_name,
+                name: $name,
+                body: $body,
+                draft: $draft,
+                prerelease: $prerelease
+              }')
+
+            # 发送请求到 GitHub API 创建 Release
             CREATED_RELEASE=$(curl -X POST \
               -H "Authorization: token $GITHUB_TOKEN" \
               -H "Accept: application/vnd.github.v3+json" \
               https://api.github.com/repos/$TARGET_REPO/releases \
-              -d '{
-                "tag_name": "'"$TAG_NAME"'",
-                "name": "'"$NAME"'",
-                "body": "'"$BODY"'",
-                "draft": '$DRAFT',
-                "prerelease": '$PRERELEASE'
-              }')
+              -d "$RELEASE_PAYLOAD")
 
-            # 🔍 先打印原始 API 返回内容，便于调试
+            # 打印原始 API 响应（调试用）
             echo "📥 Raw API Response (创建 Release):"
             echo "$CREATED_RELEASE"
 
-            # 尝试解析是否有 id 字段，判断是否创建成功
+            # 检查是否创建成功：是否有 "id" 字段
             echo "$CREATED_RELEASE" | jq -e 'has("id")' >/dev/null 2>&1
             if [ $? -ne 0 ]; then
-              echo "❌ 创建 Release 失败，返回的 JSON 无效或 API 返回错误。"
-              echo "返回内容："
+              echo "❌ 创建 Release 失败，返回内容："
               echo "$CREATED_RELEASE"
               echo "⏩ 跳过此 Release 的附件同步"
               continue
