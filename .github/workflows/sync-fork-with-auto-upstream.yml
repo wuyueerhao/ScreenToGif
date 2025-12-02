@@ -81,7 +81,7 @@ jobs:
           git push origin master
 
       # ----------------------------------------------
-      # Step 4: 同步 Releases 和附件（已修复 JSON 构造问题）
+      # Step 4: 同步 Releases 和附件（已修复 JSON 与重复创建问题）
       # ----------------------------------------------
       - name: Sync Releases and Assets using GitHub API
         env:
@@ -117,88 +117,98 @@ jobs:
 
             echo "🔁 正在处理 Release: $NAME (Tag: $TAG_NAME)"
 
-            # Step 1: 在你的 Fork 中创建相同的 Release（使用 jq 构造合法 JSON，避免手动拼接错误）
-            echo "🆕 在你的 Fork 中创建 Release: $NAME"
-            RELEASE_PAYLOAD=$(jq -n \
-              --arg tag_name "$TAG_NAME" \
-              --arg name "$NAME" \
-              --arg body "$BODY" \
-              --argjson draft "$DRAFT" \
-              --argjson prerelease "$PRERELEASE" \
-              '{
-                tag_name: $tag_name,
-                name: $name,
-                body: $body,
-                draft: $draft,
-                prerelease: $prerelease
-              }')
+            # Step 1: 检查你的 Fork 仓库中是否已经存在相同 tag_name 的 Release
+            echo "🔍 检查目标仓库中是否已存在 Release（Tag: $TAG_NAME）"
+            EXISTING_RELEASE=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
+              https://api.github.com/repos/$TARGET_REPO/releases/tags/$TAG_NAME)
 
-            CREATED_RELEASE=$(curl -X POST \
-              -H "Authorization: token $GITHUB_TOKEN" \
-              -H "Accept: application/vnd.github.v3+json" \
-              https://api.github.com/repos/$TARGET_REPO/releases \
-              -d "$RELEASE_PAYLOAD")
+            # 如果返回内容包含 "id"，说明已存在，跳过创建
+            if echo "$EXISTING_RELEASE" | jq -e 'has("id")' >/dev/null 2>&1; then
+              echo "✅ Release（Tag: $TAG_NAME）已经存在于你的 Fork 仓库中，跳过创建。"
+            else
+              # Step 2: 如果不存在，则创建新的 Release（使用 jq 构造合法 JSON）
+              echo "🆕 在你的 Fork 中创建 Release: $NAME (Tag: $TAG_NAME)"
+              RELEASE_PAYLOAD=$(jq -n \
+                --arg tag_name "$TAG_NAME" \
+                --arg name "$NAME" \
+                --arg body "$BODY" \
+                --argjson draft "$DRAFT" \
+                --argjson prerelease "$PRERELEASE" \
+                '{
+                  tag_name: $tag_name,
+                  name: $name,
+                  body: $body,
+                  draft: $draft,
+                  prerelease: $prerelease
+                }')
 
-            # 打印原始 API 响应（调试用）
-            echo "📥 Raw API Response (创建 Release):"
-            echo "$CREATED_RELEASE"
-
-            # 检查是否创建成功：是否有 "id" 字段
-            echo "$CREATED_RELEASE" | jq -e 'has("id")' >/dev/null 2>&1
-            if [ $? -ne 0 ]; then
-              echo "❌ 创建 Release 失败，返回的 JSON 无效或 API 返回错误。"
-              echo "返回内容："
-              echo "$CREATED_RELEASE"
-              echo "⏩ 跳过此 Release 的附件同步"
-              continue
-            fi
-
-            # 获取创建的 Release 的 upload_url 和 id
-            UPLOAD_URL=$(echo "$CREATED_RELEASE" | jq -r '.upload_url' | sed 's/{?name,label}//')
-            RELEASE_ID=$(echo "$CREATED_RELEASE" | jq -r '.id')
-
-            echo "✅ 创建成功！Release ID: $RELEASE_ID"
-            echo "📤 Upload URL Base: $UPLOAD_URL"
-
-            # Step 2: 获取该 Release 的所有附件（Assets）
-            ASSETS=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
-              https://api.github.com/repos/$SOURCE_REPO/releases/$RELEASE_ID_ORIGINAL/assets)
-
-            echo "$ASSETS" | jq -c '.[]' | while read -r asset; do
-              ASSET_NAME=$(echo "$asset" | jq -r '.name')
-              ASSET_URL=$(echo "$asset" | jq -r '.url')
-              ASSET_ID=$(echo "$asset" | jq -r '.id')
-              CONTENT_TYPE=$(echo "$asset" | jq -r '.content_type')
-              DOWNLOAD_URL=$(echo "$asset" | jq -r '.browser_download_url')
-
-              echo "⬇️  正在下载附件: $ASSET_NAME"
-
-              # 下载附件到临时目录
-              curl -s -L -H "Authorization: token $GITHUB_TOKEN" \
-                -H "Accept: application/octet-stream" \
-                "$DOWNLOAD_URL" -o "/tmp/$ASSET_NAME"
-
-              # 上传附件到你的 Fork 的 Release
-              echo "📤 正在上传附件: $ASSET_NAME 到 Release ID $RELEASE_ID"
-              UPLOAD_RESPONSE=$(curl -X POST \
+              CREATED_RELEASE=$(curl -X POST \
                 -H "Authorization: token $GITHUB_TOKEN" \
-                -H "Content-Type: $CONTENT_TYPE" \
-                --data-binary @"/tmp/$ASSET_NAME" \
-                "${UPLOAD_URL}?name=${ASSET_NAME}" 2>&1)
+                -H "Accept: application/vnd.github.v3+json" \
+                https://api.github.com/repos/$TARGET_REPO/releases \
+                -d "$RELEASE_PAYLOAD")
 
-              if echo "$UPLOAD_RESPONSE" | grep -q "201 Created"; then
-                echo "✅ 附件上传成功: $ASSET_NAME"
-              else
-                echo "❌ 附件上传失败: $ASSET_NAME"
-                echo "错误详情："
-                echo "$UPLOAD_RESPONSE"
+              # 打印原始 API 响应（调试用）
+              echo "📥 Raw API Response (创建 Release):"
+              echo "$CREATED_RELEASE"
+
+              # 检查是否创建成功：是否有 "id" 字段
+              echo "$CREATED_RELEASE" | jq -e 'has("id")' >/dev/null 2>&1
+              if [ $? -ne 0 ]; then
+                echo "❌ 创建 Release 失败，返回的 JSON 无效或 API 返回错误。"
+                echo "返回内容："
+                echo "$CREATED_RELEASE"
+                echo "⏩ 跳过此 Release 的附件同步"
+                continue
               fi
 
-              # 清理临时文件
-              rm -f "/tmp/$ASSET_NAME"
+              # 获取创建的 Release 的 upload_url 和 id
+              UPLOAD_URL=$(echo "$CREATED_RELEASE" | jq -r '.upload_url' | sed 's/{?name,label}//')
+              RELEASE_ID=$(echo "$CREATED_RELEASE" | jq -r '.id')
 
-              echo "--------------------------------------------------"
-            done
+              echo "✅ 创建成功！Release ID: $RELEASE_ID"
+              echo "📤 Upload URL Base: $UPLOAD_URL"
+
+              # Step 3: 获取该 Release 的所有附件（Assets）
+              ASSETS=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
+                https://api.github.com/repos/$SOURCE_REPO/releases/$RELEASE_ID_ORIGINAL/assets)
+
+              echo "$ASSETS" | jq -c '.[]' | while read -r asset; do
+                ASSET_NAME=$(echo "$asset" | jq -r '.name')
+                ASSET_URL=$(echo "$asset" | jq -r '.url')
+                ASSET_ID=$(echo "$asset" | jq -r '.id')
+                CONTENT_TYPE=$(echo "$asset" | jq -r '.content_type')
+                DOWNLOAD_URL=$(echo "$asset" | jq -r '.browser_download_url')
+
+                echo "⬇️  正在下载附件: $ASSET_NAME"
+
+                # 下载附件到临时目录
+                curl -s -L -H "Authorization: token $GITHUB_TOKEN" \
+                  -H "Accept: application/octet-stream" \
+                  "$DOWNLOAD_URL" -o "/tmp/$ASSET_NAME"
+
+                # 上传附件到你的 Fork 的 Release
+                echo "📤 正在上传附件: $ASSET_NAME 到 Release ID $RELEASE_ID"
+                UPLOAD_RESPONSE=$(curl -X POST \
+                  -H "Authorization: token $GITHUB_TOKEN" \
+                  -H "Content-Type: $CONTENT_TYPE" \
+                  --data-binary @"/tmp/$ASSET_NAME" \
+                  "${UPLOAD_URL}?name=${ASSET_NAME}" 2>&1)
+
+                if echo "$UPLOAD_RESPONSE" | grep -q "201 Created"; then
+                  echo "✅ 附件上传成功: $ASSET_NAME"
+                else
+                  echo "❌ 附件上传失败: $ASSET_NAME"
+                  echo "错误详情："
+                  echo "$UPLOAD_RESPONSE"
+                fi
+
+                # 清理临时文件
+                rm -f "/tmp/$ASSET_NAME"
+
+                echo "--------------------------------------------------"
+              done
+            fi
 
           done
 
